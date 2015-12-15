@@ -1,0 +1,172 @@
+#!/bin/bash
+
+GLOBAL_GOROOT=`pwd`/goroot/
+GLOBAL_GOPATH=`pwd`/gopath/
+
+set -e
+
+get_go_version() {
+    platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    if [ "$(uname -m)" = "x86_64" ]; then
+      arch="amd64"
+    else
+      arch="386"
+    fi
+    echo "finding Go versions for $platform-$arch"
+    url=${GO_DOWNLOADS_LIST_URL:=http://golang.org/dl/}
+    go_downloads_list=$url
+    curl -sL $go_downloads_list \
+    | grep -o "<a.*href=\".*//.*/golang/go.*\.tar\.gz" \
+    | sed -e 's/<a .*href=['"'"'"]//' -e 's/["'"'"'].*$//' -e '/^$/ d' \
+    | sed -n 's/.*golang\/\(go.*\.tar\.gz\)/\1/p' \
+    | sed -n "s/go\(.*\)\.$platform-$arch.*/\1/p" \
+    | uniq \
+    | sort
+}
+
+
+install_go() {
+    echo "Waiting for the go download version list..."
+    get_go_version
+    set -e
+    read -p "Input the version you want to install: " version
+    version_dir="${GLOBAL_GOROOT}$version"
+    OLDPWD=$(pwd)
+    mkdir -p "$version_dir"
+    cd "$version_dir"
+    platform="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    if [ "$(uname -m)" = "x86_64" ]; then
+        arch="amd64"
+    else
+        arch="386"
+    fi
+
+    if [ -z "$version" ]; then
+        echo "Must specify version"
+        exit 1
+    fi
+    # Allow the GO_FILES_URL environment variable override the location of the
+    # go installation files
+    files_url=${GO_FILES_URL:=https://storage.googleapis.com/golang/}
+    # Check for Mac OS X.
+    version_major="$(echo $version | cut -d . -f 1)"
+    version_minor="$(echo $version | cut -d . -f 2)"
+    if [ $platform = "darwin" -a $version_minor -gt 1 ]; then
+        if [ $version_minor -gt 4 ]; then
+            file_name="go${version}.${platform}-${arch}.tar.gz"
+        else
+            darwin_major="$(uname -r | cut -d . -f 1)"
+
+            if [ $darwin_major -lt 11 ]; then
+                file_name="go${version}.${platform}-${arch}-osx10.6.tar.gz"
+            else
+                file_name="go${version}.${platform}-${arch}-osx10.8.tar.gz"
+            fi
+        fi
+    else
+        file_name="go${version}.${platform}-${arch}.tar.gz"
+    fi
+    download=$files_url$file_name
+    set +e
+    mkdir -p ${GLOBAL_GOROOT}.cache
+    (
+        if type curl &>/dev/null; then
+            echo "Installing $file_name"
+            curl -s -f "$download" > "${GLOBAL_GOROOT}.cache/$file_name"
+            tar -zxf "${GLOBAL_GOROOT}.cache/$file_name" --strip-components 1
+        elif type wget &>/dev/null; then
+            echo "Installing $file_name"
+            wget -P "${GLOBAL_GOROOT}.cache" "${download}"
+            tar -zxf "${GLOBAL_GOROOT}.cache/$file_name" --strip-components 1
+        else
+            echo "error: please install \`curl\` or \`wget\` and try again" >&2
+            exit 1
+        fi
+        rm "${GLOBAL_GOROOT}.cache/$file_name"
+    ) || \
+        {
+            cd $OLDPWD
+            rm -rf "$version_dir"
+
+            echo "gobrew: unable to install ${version} from binary, download not available"
+            exit 1
+        }
+    echo "Installed ${version}"
+    cd $OLDPWD
+}
+
+
+init() {
+    read -p "Please input go version: " GO_VERSION
+    if [ -z ${GO_VERSION} ]; then
+        echo "Must specify version"
+        exit 1
+    fi
+    CURRENT_GOROOT=${GLOBAL_GOROOT}${GO_VERSION}
+    CURRENT_GOPATH=${GLOBAL_GOPATH}${GO_VERSION}
+    if [ ! -d ${CURRENT_GOROOT} ]; then
+        echo "No selected go directory exists. Please install this version."
+        exit 1
+    fi
+    GOBIN=${CURRENT_GOROOT}/bin/go
+    if [ ! -d ${CURRENT_GOPATH} ]; then
+        mkdir -p ${CURRENT_GOPATH}
+    fi
+    export GOROOT=${CURRENT_GOROOT}
+    export GOPATH=${CURRENT_GOPATH}
+}
+
+
+build() {
+    read -p "Please input go resource file path: " RESOURCE_FILE_PATH
+    if [ -z ${RESOURCE_FILE_PATH} ]; then
+        echo "Empty resource file path."
+        exit 1
+    fi
+    if [ ! -f ${RESOURCE_FILE_PATH} ]; then
+        echo "Resource file not exist."
+        exit 1
+    fi
+    read -p "Please input the builder output file path: " OUTPUT_FILE_PATH
+    if [ -z ${OUTPUT_FILE_PATH} ]; then
+        result="$(${GOBIN} build ${RESOURCE_FILE_PATH})"
+    else
+        result="$(${GOBIN} build -o ${OUTPUT_FILE_PATH} ${RESOURCE_FILE_PATH})"
+    fi
+    if [ $? != 0 ]; then
+        echo "Build error."
+    fi
+    echo "Build Succeed."
+}
+
+
+get_package() {
+    read -p "Please input package list what the build need: " PACKAGE_LIST
+    for package in ${PACKAGE_LIST}
+    do
+        ${GOBIN} get $package
+    done
+    echo "Get package finished."
+}
+
+
+help() {
+
+}
+
+command="$1"
+case "$command" in
+"install" )
+    install_go
+    ;;
+"help" )
+    help
+    ;;
+* )
+    if [ -z $command ]; then
+        echo "No such command."
+        exit 1
+    fi
+    $command $@
+    ;;
+esac
