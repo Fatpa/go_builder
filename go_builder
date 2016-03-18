@@ -91,6 +91,9 @@ install_go() {
             echo "gobrew: unable to install ${version} from binary, download not available"
             exit 1
         }
+    ln -s $version_dir/bin/go /usr/local/bin/go
+    ln -s $version_dir/bin/godoc /usr/local/bin/godoc
+    ln -s $version_dir/bin/gofmt /usr/local/bin/gofmt
     echo "Installed ${version}"
     cd $OLDPWD
 }
@@ -151,7 +154,7 @@ get_package() {
 
 
 help() {
-
+    :;
 }
 
 command="$1"
